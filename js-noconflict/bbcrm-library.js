@@ -1,0 +1,341 @@
+function bbcrm_buyerreg_shownda( this_button ) {
+
+    var form_validates = true;
+
+    //this_button.parents('form:first').children('.bbcrm-form-wrapper')
+
+    //alert( this_button.html() );
+
+    var mod = this_button.parents('div:first').find('form:first').attr('module');
+    var formeditor_id = this_button.parents('div:first').find('form:first').children('.bbcrm-form-wrapper').attr('id');
+    var formid = this_button.parents('div:first').find('form:first').attr('id');
+    //var form_data = this_button.parents('div:first').find('form:first').children('.bbcrm-form-wrapper').find('input, textarea, select').serialize();
+    var form_data = this_button.parents('div.bbcrm-window:first').find('form:first').serialize();
+
+    //alert( "mod: " + mod + "\n" + "formeditor_id: " + formeditor_id + "\nForm ID: " + formid +"\nData: " + form_data);
+    //alert("boo");
+    var params = [];
+    params.push(form_data);
+    params.push(formid);
+
+    //bbcrm_validate( formid, formeditor_id, mod, form_data, bbcrm_getNDA, params, null, null );
+    bbcrm_validate( this_button.parents('div:first').find('form:first').attr('id'),
+        this_button.parents('div:first').find('form:first').children('.bbcrm-form-wrapper').attr('id'),
+        this_button.parents('div:first').find('form:first').attr('module'),
+        this_button.parents('div.bbcrm-window:first').find('form:first').serialize(),
+        bbcrm_getNDA,
+        params,
+        null, null, this_button);
+}
+
+function bbcrm_validate( formid, formeditorid, mod, form_data, success_func, success_params, fail_func, fail_params, this_button ) {
+    
+    //alert( "mod: " + mod + "\n" + "formeditor_id: " + formeditorid + "\nForm ID: " + formid +"\nData: " + form_data);
+    if (this_button) {
+    	this_button.attr("disabled", true)
+    }
+    jQuery.ajax({
+        url: api_path+'validate',
+        method: 'POST',
+        data: {
+            form_details: form_data,
+            module: mod,
+            form_id: formid,
+            formeditor_id: formeditorid,
+            authorization: getCookie('auth_token')
+        },
+        success: function( response ) {
+            if( ! bbcrm_renderFormErrors( response ) ) {
+
+                if( success_func != null ) {
+                    if( success_params != null ) {
+                        success_func( success_params );
+                    } else {
+                        success_func();
+                    }
+                }
+                else {
+                    return false;
+                }
+            } else {
+		if (this_button) {
+			this_button.attr("disabled", false)
+                }
+		if( fail_func != null ) {
+                    if( fail_params != null ) {
+                        fail_func( fail_params );
+                    } else {
+                        fail_func();
+                    }
+                } else {
+                    return false;
+                }
+            }
+        }
+    });
+}
+
+function bbcrm_getNDA( params ) {
+    // param is always an array:
+    // form_id, form_data
+
+    // no longer needs to handle validation, because that has its own separate function call.
+    jQuery.ajax({
+        url: api_path+'getnda',
+        method: 'POST',
+        data: {
+            buyer_details: params[0],
+            form_id: params[1]
+        },
+        success: function( response ) {
+
+            /* format:
+             * code
+             * message
+             * type ( = document)
+             * body
+                html
+                form_id
+             */
+
+            nda_json = JSON.parse( response );
+            console.log( response );
+
+            var nda_details = nda_json.body;
+
+            var html_unescape = JSON.parse(nda_details.html);
+
+            //alert(nda_details.formid);
+            //alert(html_unescape.text);
+            bbcrm_addElementAfterForm( "signaturebox", nda_details.formid, nda_details.signaturebox );
+            bbcrm_addElementAfterForm( "bbcrm-nda", nda_details.formid, html_unescape.text);
+            jQuery('#bbcrm-buyerregistration-getnda').hide();
+
+            // hide the form
+            jQuery('#'+params[1]).hide();
+
+            jQuery('#bbcrm-buyer-registration-submit').show();
+
+            jQuery("#signature").jSignature({'height':'150px'})
+
+            jQuery("#bbcrm-nda").scroll(function() {
+                if(Math.ceil(jQuery(this).scrollTop()) + jQuery(this).height()  >= jQuery(this)[0].scrollHeight-20 ) {
+                    jQuery("#bbcrm-reg-message").slideUp();
+                    jQuery("#bbcrm-reg-accept").slideDown();
+                }
+            });
+        }
+    }).done(function(){//animated scroll to top after getting nda
+        jQuery('html, body').animate({scrollTop: "100"},3000);
+    });
+}
+
+function bbcrm_addElementAfterForm( element_id, form_id, wrapper_content_html ) {
+    var new_element_html = '<div id="'+element_id+'" class="bbcrm-element">' + wrapper_content_html + '</div>';
+
+    //alert('#'+form_id);
+    //alert(new_element_html);
+
+    let selector = '#'+form_id;
+    if(jQuery(selector).length) { //check the element we want to insert after actually exists
+        try {
+            jQuery(selector).after( new_element_html );
+        } catch(err) {
+            console.log('BBCRM Error occured');
+            console.log('Selector: '+selector);
+            console.log('element_id: '+element_id);
+        }
+    } else {
+        console.log('BBCRM error: trying to address non existing element. Selector: '+selector);
+    }
+    
+
+    //alert('#'+form_id + " .bbcrm-form-wrapper");
+    //alert( new_element_html );
+}
+
+function bbcrm_renderFormErrors( errors ) {
+    var v = JSON.parse( errors );
+
+    // clear old errors, and make way for new ones
+    jQuery('#'+v.formid+' .bbcrm-form-wrapper .bbcrm-form-field-wrapper .bbcrm-error-message').text("");
+
+    if( v.hasOwnProperty("error") ) {	// this field will always be returned in the correct format from the PHP "verify()" method in BBCRMAPI.
+        var formid = v.formid;
+        jQuery.each( v.error, function( key, value ) {
+		if(value.field=='g-recaptcha-response'){
+                    jQuery('#recaptcha-error').text( value.message ).css({"color": "red"});
+                }
+                else{
+                    jQuery('#'+formid+' .bbcrm-form-wrapper #field_'+value.field+" .bbcrm-error-message").text( value.message );
+                }
+        //    jQuery('#'+formid+' .bbcrm-form-wrapper #field_'+value.field+" .bbcrm-error-message").text( value.message );
+        });
+        return true;					// e.g. "If there are errors.....
+    } else {	// no errors
+        return false;
+    }
+}
+
+function bbcrm_submitNDA( this_button ) {
+
+    if((jQuery("#accept-sig").val()).toLowerCase() != (jQuery("#firstName").val()).toLowerCase()+" "+(jQuery("#lastName").val()).toLowerCase() ){
+        if (!jQuery("#accept-sigerr").length){
+            jQuery("#accept-text").append("<div id='accept-sigerr' class='formerr'>This field must match the first name and last name you entered. Please check your entries.</div>");
+        }
+        return false;
+    } else {
+        jQuery("#accept-sigerr").remove();
+    }
+
+    if(!jQuery("#acceptance").prop("checked") ){
+        if (!jQuery("#acceptanceerr").length){
+            jQuery("#accept-text").append("<div id='acceptanceerr' class='formerr'>Please check the I accept checkbox in order to continue.</div>");
+        }
+        return false;
+    } else {
+        jQuery("#acceptanceerr").remove();
+    }
+
+    if( jQuery("#signature").jSignature('getData', 'native').length == 0) {
+        if (!jQuery("#sigerr").length){
+            jQuery("#sigwrap").prepend("<div id='sigerr' class='formerr'>Please sign it below.</div>");
+        }
+        return false;
+    } else {
+        jQuery("#sigerr").remove();
+    }
+
+
+    sigdata = jQuery("#signature").jSignature("getData");
+    jQuery("#signature64").val(sigdata);
+
+    var form_data = this_button.parents('div.bbcrm-window:first').find('form:first').serialize()+"&signature64="+jQuery("#signature64").val();
+    var nda = this_button.parents('div.bbcrm-window:first').find('#bbcrm-nda').html();
+
+    //alert( nda );
+    var formid = this_button.parents('div:first').find('form:first').attr('id');
+    jQuery(this_button).attr("disabled", true);//@akiva disable button after verifying and one click
+    jQuery("#buyer-registration").css("cursor", "wait");
+    jQuery.ajax({
+        url: api_path+'submitbuyerregistration',
+        method: 'POST',
+        data: {
+            formdata: form_data,
+            document: nda
+        },
+        success: function( response ) {
+            response = JSON.parse(response);
+            if (response.code === 200) {
+                if (response.body.html) {
+                    jQuery("#buyer-registration").empty();
+                    jQuery("#buyer-registration").append(response.body.html);
+		    jQuery("#buyer-registration").css("cursor", "auto");
+                }
+                if (response.body.mediaid) {
+                    request=new XMLHttpRequest();
+                    request.open("GET", "/viewer/viewer.html", false);
+                    request.send();
+                    if (request.status == 200) viewerhost='/viewer';
+                    else viewerhost='http://documentviewer.businessbrokerscrm.com/viewer';
+                    var viewerWindow=window.open('', 'PDF Viewer', 'height=768,width=1224'); /* Why isn't this working? */
+                    //viewerWindow.location.replace(viewerhost+'/viewer.html?file=' + encodeURIComponent(response.body.file));
+
+                    window.location.replace(viewerhost+'/viewer.html?file='+response.body.crmurl+'/index.php/media/media/getFile/id/'+response.body.mediaid+'/key/'+response.body.mediakey );
+
+
+                }
+            }
+        }
+    }).done(function(){//animated scroll to top after nda submitted
+        jQuery('html, body').animate({scrollTop: "100"},3000);
+    });
+
+}
+
+function bbcrm_submitFormData( this_button ) {
+    var form = this_button.parents('div:first').children('form:first');
+    alert( form.serialize() );
+}
+
+function bbcrm_form_next_button( this_button, function_validate_success, function_validate_fail ) {
+
+    var data = this_button.parents('form:first').children('.bbcrm-form-wrapper').filter(':visible').find('input, textarea, select').serialize();
+    var form_id = this_button.parents('form:first').attr("id");
+    var formeditor_id = this_button.parents('form:first').attr("formeditor-id");
+    var module =  this_button.parents('form:first').attr("module");
+
+    //alert( data );
+
+    return bbcrm_validate( jQuery(this), form_id, formeditor_id, module, data );
+}
+
+/*
+function bbcrm_form_previous_button( this_button ) {
+	var current_form = this_button.parents('form:first').children('.bbcrm-form-wrapper').filter(':visible');	
+	if( ! jQuery.isEmptyObject(current_form.prev('.bbcrm-form-wrapper' )) ) {			// must always use jQuery.isEmptyObject, because checking for null is extremely unreliable.
+		current_form.hide();
+		current_form.prev('.bbcrm-form-wrapper').show();
+	}	
+}
+
+function bbcrm_form_next_button_shownda( this_button ) {
+	//if( bbcrm_form_next_button( this_button ) ) { alert ("SING"); } else { alert("keep trying"); }
+
+	if( nda_triggered )	{	// behave like a normal NEXT button
+		
+		var current_form = this_button.parents('form:first').children('.bbcrm-form-wrapper').filter(':visible');
+		
+		if( ! jQuery.isEmptyObject( current_form.next( '.bbcrm-form-wrapper' ) ) ) {		// must always use jQuery.isEmptyObject, because checking for null is extremely unreliable.
+			current_form.hide();
+			current_form.next('.bbcrm-form-wrapper').show();
+			
+			// goto next form, and, if it's the last form, then disable this button
+			//current_form = current_form.next('.bbcrm-form-wrapper');
+		}
+		
+		//alert( "triggered" );
+		
+	} else {
+	
+		//alert( "not triggered" );
+	
+		var data = this_button.parents('form:first').children('.bbcrm-form-wrapper').filter(':visible').find('input, textarea, select').serialize();	
+		var form_id = this_button.parents('form:first').attr("id");
+		var formeditor_id = this_button.parents('form:first').attr("formeditor-id");
+		var module =  this_button.parents('form:first').attr("module");
+		
+		//alert("show NDA");
+		
+		jQuery.ajax({
+			url: api_path+'validate',
+			method: 'POST',
+			data: {
+				form_details: data,
+				module: module,
+				form_id: form_id,
+				formeditor_id: formeditor_id,
+			},
+			success: function( response ) {
+				console.log(response);
+					// render NDA
+				if( bbcrm_renderFormErrors( response ) ) {
+					jQuery('.bbcrm-form-button.bbcrm-form-previous').show();
+					nda_triggered = true;
+					bbcrm_getNDA(form_id, data);
+					
+				} else {	// if failed, do nothing because the errors already show up.
+				}
+			}
+		});
+	}
+}
+
+*/
+
+
+
+
+
+
+
